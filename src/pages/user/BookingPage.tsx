@@ -31,6 +31,7 @@ interface SlotInfo {
   tersedia: boolean
   sisaUnit: number
   totalUnit: number
+  lewatWaktu?: boolean
 }
 
 interface AvailabilityData {
@@ -39,6 +40,8 @@ interface AvailabilityData {
   bookedSlots: { waktuMulai: string; durasi: number; waktuSelesai: string; status: string }[]
   jamBuka: string
   jamTutup: string
+  serverTime?: string
+  isToday?: boolean
 }
 
 export default function BookingPage() {
@@ -119,6 +122,31 @@ export default function BookingPage() {
     const selesaiM = selesai % 60
     const waktuSelesaiStr = `${selesaiH.toString().padStart(2, '0')}:${selesaiM.toString().padStart(2, '0')}`
 
+    // Cek jam buka & tutup operasional
+    const [bukaH, bukaM] = (availability.jamBuka || '08:00').split(':').map(Number)
+    const [tutupH, tutupM] = (availability.jamTutup || '22:00').split(':').map(Number)
+    const bukaMin = bukaH * 60 + bukaM
+    const tutupMin = tutupH * 60 + tutupM
+
+    if (mulai < bukaMin) {
+      setWaktuConflict(`Waktu booking tidak boleh sebelum jam buka (${availability.jamBuka}).`)
+      return
+    }
+    if (selesai > tutupMin) {
+      setWaktuConflict(`Sesi ${watchWaktu}–${waktuSelesaiStr} melewati jam tutup (${availability.jamTutup}). Kurangi durasi atau pilih waktu mulai lebih awal.`)
+      return
+    }
+
+    // Cek apakah waktu mulai sudah lewat (hanya relevan jika tanggal booking = hari ini)
+    if (availability.isToday && availability.serverTime) {
+      const serverNow = new Date(availability.serverTime)
+      const nowMin = serverNow.getHours() * 60 + serverNow.getMinutes()
+      if (mulai < nowMin) {
+        setWaktuConflict(`Jam ${watchWaktu} sudah lewat. Silakan pilih waktu yang masih akan datang.`)
+        return
+      }
+    }
+
     // Cek apakah ada slot dalam rentang ini yang habis
     let konflikt = false
     for (let t = mulai; t < selesai; t += 60) {
@@ -141,6 +169,7 @@ export default function BookingPage() {
   // Slot warna
   const getSlotStyle = (slot: SlotInfo, isSelected: boolean) => {
     if (isSelected) return { bg: '#EDE9FE', border: '#7C3AED', text: '#5B21B6', dot: '#7C3AED' }
+    if (slot.lewatWaktu) return { bg: '#F4F4F5', border: '#E4E4E7', text: '#9CA3AF', dot: '#A1A1AA' }
     if (!slot.tersedia) return { bg: '#FEF2F2', border: '#FECACA', text: '#DC2626', dot: '#DC2626' }
     if (slot.sisaUnit === 1) return { bg: '#FFFBEB', border: '#FDE68A', text: '#D97706', dot: '#F59E0B' }
     return { bg: '#ECFDF5', border: '#A7F3D0', text: '#059669', dot: '#10B981' }
@@ -157,6 +186,15 @@ export default function BookingPage() {
   const handleSlotClick = (slot: SlotInfo) => {
     if (!slot.tersedia) return
     setValue('waktuMulai', slot.jam)
+
+    // Clamp durasi yang sudah dipilih agar tidak melewati jam tutup dari slot baru ini
+    const jamTutupStr = availability?.jamTutup || '22:00'
+    const [sh] = slot.jam.split(':').map(Number)
+    const [tutupH, tutupM] = jamTutupStr.split(':').map(Number)
+    const sisaJam = Math.max(1, Math.min(12, Math.floor(((tutupH * 60 + tutupM) - sh * 60) / 60)))
+    if ((watchDurasi || 0) > sisaJam) {
+      setValue('durasi', sisaJam)
+    }
   }
 
   const handleFileSelect = (file: File) => {
@@ -212,6 +250,17 @@ export default function BookingPage() {
     return `${Math.floor(selesai / 60).toString().padStart(2, '0')}:${(selesai % 60).toString().padStart(2, '0')}`
   })()
 
+  // Durasi maksimum yang masih masuk dalam jam operasional, dihitung dari waktu mulai
+  const maxDurasi = (() => {
+    const jamTutupStr = availability?.jamTutup || '22:00'
+    if (!watchWaktu) return 12
+    const [h, m] = watchWaktu.split(':').map(Number)
+    const [tutupH, tutupM] = jamTutupStr.split(':').map(Number)
+    const sisaMenit = (tutupH * 60 + tutupM) - (h * 60 + m)
+    const sisaJam = Math.floor(sisaMenit / 60)
+    return Math.max(1, Math.min(12, sisaJam))
+  })()
+
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
       <div className="mb-7">
@@ -252,7 +301,7 @@ export default function BookingPage() {
                   </div>
                   <div>
                     <label className="field-label">Durasi (jam)</label>
-                    <input {...register('durasi')} type="number" min={1} max={12} className="form-input" />
+                    <input {...register('durasi')} type="number" min={1} max={maxDurasi} className="form-input" />
                     {errors.durasi && <p className="text-xs mt-1.5 font-medium" style={{ color: '#DC2626' }}>{errors.durasi.message}</p>}
                   </div>
                 </div>
@@ -261,7 +310,7 @@ export default function BookingPage() {
                 <div>
                   <label className="field-label">Waktu Mulai</label>
                   <input {...register('waktuMulai')} type="time"
-                    min="08:00" max="21:00"
+                    min={availability?.jamBuka || '08:00'} max={availability?.jamTutup || '22:00'}
                     className={`form-input ${waktuConflict ? 'border-red-400' : ''}`}
                     style={waktuConflict ? { borderColor: '#F87171', boxShadow: '0 0 0 3px rgba(239,68,68,0.12)' } : {}}
                   />
@@ -305,6 +354,7 @@ export default function BookingPage() {
                         { color: '#F59E0B', label: 'Sisa 1 unit' },
                         { color: '#DC2626', label: 'Penuh' },
                         { color: '#7C3AED', label: 'Dipilih' },
+                        { color: '#A1A1AA', label: 'Sudah lewat' },
                       ].map(({ color, label }) => (
                         <div key={label} className="flex items-center gap-1.5">
                           <div className="w-2.5 h-2.5 rounded-full" style={{ background: color }} />
@@ -331,14 +381,18 @@ export default function BookingPage() {
                               cursor: slot.tersedia ? 'pointer' : 'not-allowed',
                               transform: isSelected ? 'scale(1.04)' : undefined,
                             }}
-                            title={slot.tersedia
-                              ? `${slot.jam} — ${slot.sisaUnit}/${slot.totalUnit} unit tersedia`
-                              : `${slot.jam} — Penuh (${slot.totalUnit}/${slot.totalUnit} terpakai)`}
+                            title={
+                              slot.lewatWaktu
+                                ? `${slot.jam} — Sudah lewat`
+                                : slot.tersedia
+                                  ? `${slot.jam} — ${slot.sisaUnit}/${slot.totalUnit} unit tersedia`
+                                  : `${slot.jam} — Penuh (${slot.totalUnit}/${slot.totalUnit} terpakai)`
+                            }
                           >
                             <div className="w-1.5 h-1.5 rounded-full mx-auto mb-1" style={{ background: s.dot }} />
                             <p className="text-xs font-bold leading-none" style={{ color: s.text }}>{slot.jam}</p>
                             <p className="text-[9px] mt-0.5 font-medium" style={{ color: s.text, opacity: 0.75 }}>
-                              {slot.tersedia ? `${slot.sisaUnit}/${slot.totalUnit}` : 'Penuh'}
+                              {slot.lewatWaktu ? 'Lewat' : slot.tersedia ? `${slot.sisaUnit}/${slot.totalUnit}` : 'Penuh'}
                             </p>
                           </button>
                         )
