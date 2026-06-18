@@ -1,0 +1,15 @@
+// src/components/layout/RootLayout.tsx
+
+import { Outlet } from 'react-router-dom'
+import Navbar from './Navbar'
+
+export default function RootLayout() {
+  return (
+    <div className="min-h-screen flex flex-col bg-white">
+      <Navbar />
+      <main className="flex-1">
+        <Outlet />
+      </main>
+    </div>
+  )
+}
